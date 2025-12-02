@@ -1,9 +1,12 @@
 from typing import Optional, List
 from datetime import datetime
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
+import json
+import io
 
 # MongoDB 設定
 MONGODB_URI = "mongodb+srv://lai:Hs910738@lqi.pbmygvj.mongodb.net/"
@@ -110,3 +113,52 @@ async def health_check():
         return {"status": "healthy", "database": "connected"}
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Database unavailable: {str(e)}")
+
+@app.get("/export")
+async def export_all_samples(format: str = "json", limit: int = 1000):
+    """匯出所有記錄（JSON 格式）"""
+    samples = await app.mongodb["samples"].find().sort("created_at_datetime", -1).limit(limit).to_list(limit)
+    
+    for sample in samples:
+        sample["id"] = str(sample.pop("_id"))
+        # 移除內部欄位
+        sample.pop("created_at_datetime", None)
+    
+    if format == "json":
+        # 產生 JSON 檔案並回傳下載
+        json_data = json.dumps(samples, indent=2, ensure_ascii=False)
+        stream = io.BytesIO(json_data.encode('utf-8'))
+        
+        return StreamingResponse(
+            stream,
+            media_type="application/json",
+            headers={"Content-Disposition": "attachment; filename=samples_export.json"}
+        )
+    
+    return samples
+
+@app.post("/upload-video/")
+async def upload_video(file: UploadFile = File(...), user_id: str = "default_user"):
+    """上傳 vlog 影片（參考 tutorial）"""
+    import os
+    import aiofiles
+    
+    # 儲存到 data/{user_id}/ 資料夾
+    file_dir = os.path.join("data", user_id)
+    os.makedirs(file_dir, exist_ok=True)
+    
+    file_path = os.path.join(file_dir, file.filename)
+    
+    async with aiofiles.open(file_path, "wb") as buffer:
+        while True:
+            chunk = await file.read(1024 * 1024)  # 1MB chunks
+            if not chunk:
+                break
+            await buffer.write(chunk)
+    
+    return {
+        "filename": file.filename,
+        "saved_to": file_path,
+        "user_id": user_id,
+        "message": "Video uploaded successfully"
+    }
