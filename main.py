@@ -10,7 +10,7 @@ import io
 
 # MongoDB 設定
 MONGODB_URI = "mongodb+srv://lai:Hs910738@lqi.pbmygvj.mongodb.net/"
-DB_NAME = "lai"
+DB_NAME = "data"
 
 app = FastAPI(title="Experience Sampling API", version="1.0.0")
 
