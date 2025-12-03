@@ -1,8 +1,4 @@
-# EmoGo Backend - FastAPI + MongoDB
-
-Experience Sampling App 的後端 API 服務
-
-## 🔗 作業要求 API URL
+# EmoGo Backend
 
 **Base URL**: https://fastapi-example-ykqs.onrender.com
 
@@ -20,6 +16,4 @@ POST https://fastapi-example-ykqs.onrender.com/upload-video/?user_id={user_id}
 ```
 GET https://fastapi-example-ykqs.onrender.com/download-video/{user_id}/{filename}
 ```
-
----
 
