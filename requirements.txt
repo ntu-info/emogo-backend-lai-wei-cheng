@@ -3,5 +3,5 @@ motor
 pydantic
 uvicorn[standard]
 python-dateutil
-aiofiles
 python-multipart
+pymongo

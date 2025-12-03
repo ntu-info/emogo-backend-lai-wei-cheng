@@ -2,9 +2,10 @@ from typing import Optional, List
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse
-from motor.motor_asyncio import AsyncIOMotorClient
+from fastapi.responses import StreamingResponse, Response
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorGridFSBucket
 from pydantic import BaseModel
+from bson import ObjectId
 import json
 import io
 
@@ -48,7 +49,8 @@ class SampleResponse(BaseModel):
 async def startup_db_client():
     app.mongodb_client = AsyncIOMotorClient(MONGODB_URI)
     app.mongodb = app.mongodb_client[DB_NAME]
-    print("✅ Connected to MongoDB")
+    app.fs = AsyncIOMotorGridFSBucket(app.mongodb)
+    print("✅ Connected to MongoDB with GridFS")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
@@ -141,54 +143,50 @@ async def export_all_samples(format: str = "json", limit: int = 1000):
 
 @app.post("/upload-video/")
 async def upload_video(file: UploadFile = File(...), user_id: str = "default_user"):
-    """上傳 vlog 影片（參考 tutorial）"""
-    import os
-    import aiofiles
+    """上傳 vlog 影片到 MongoDB GridFS"""
+    # 讀取檔案內容
+    file_data = await file.read()
     
-    # 使用絕對路徑確保檔案存在正確位置
-    base_dir = os.path.abspath("data")
-    file_dir = os.path.join(base_dir, user_id)
-    os.makedirs(file_dir, exist_ok=True)
+    # 上傳到 GridFS，包含 metadata
+    file_id = await app.fs.upload_from_stream(
+        file.filename,
+        file_data,
+        metadata={
+            "user_id": user_id,
+            "content_type": "video/mp4",
+            "original_filename": file.filename
+        }
+    )
     
-    file_path = os.path.join(file_dir, file.filename)
-    
-    async with aiofiles.open(file_path, "wb") as buffer:
-        while True:
-            chunk = await file.read(1024 * 1024)  # 1MB chunks
-            if not chunk:
-                break
-            await buffer.write(chunk)
-    
-    print(f"✅ Video uploaded: {file_path}, exists: {os.path.exists(file_path)}")
+    print(f"✅ Video uploaded to GridFS: {file.filename}, file_id: {file_id}")
     
     return {
         "filename": file.filename,
-        "saved_to": file_path,
+        "file_id": str(file_id),
         "user_id": user_id,
-        "message": "Video uploaded successfully"
+        "message": "Video uploaded to MongoDB GridFS successfully"
     }
 
-# 影片下載端點 (移到 app = FastAPI(...) 之後)
+# 影片下載端點 (從 GridFS 下載)
 @app.get("/download-video/{user_id}/{filename}")
 async def download_video(user_id: str, filename: str):
-    import os
+    """從 MongoDB GridFS 下載影片"""
+    # 查詢 GridFS 中符合條件的檔案
+    cursor = app.fs.find({"metadata.user_id": user_id, "filename": filename})
+    files = await cursor.to_list(length=1)
     
-    # 使用絕對路徑
-    base_dir = os.path.abspath("data")
-    file_path = os.path.join(base_dir, user_id, filename)
+    if not files:
+        raise HTTPException(status_code=404, detail=f"Video not found: {filename} for user {user_id}")
     
-    print(f"🔍 Looking for file: {file_path}")
-    print(f"📁 File exists: {os.path.exists(file_path)}")
+    file_doc = files[0]
+    file_id = file_doc["_id"]
     
-    if not os.path.exists(file_path):
-        # 列出目錄內容以便除錯
-        user_dir = os.path.join(base_dir, user_id)
-        if os.path.exists(user_dir):
-            files = os.listdir(user_dir)
-            print(f"📂 Files in {user_dir}: {files}")
-        else:
-            print(f"❌ Directory not found: {user_dir}")
-        
-        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+    # 從 GridFS 下載檔案
+    grid_out = await app.fs.open_download_stream(file_id)
+    file_data = await grid_out.read()
     
-    return FileResponse(file_path, media_type="video/mp4", filename=filename)
+    print(f"✅ Video downloaded from GridFS: {filename}, size: {len(file_data)} bytes")
+    
+    return Response(content=file_data, media_type="video/mp4", headers={
+        "Content-Disposition": f'attachment; filename="{filename}"'
+    })
