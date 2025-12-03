@@ -2,9 +2,24 @@
 
 Experience Sampling App 的後端 API 服務
 
-## 🔗 Public Server
+## 🔗 作業要求 API URL
 
 **Base URL**: https://fastapi-example-ykqs.onrender.com
+
+### 匯出資料 (Export)
+```
+GET https://fastapi-example-ykqs.onrender.com/export
+```
+
+### 上傳影片 (Upload Video)
+```
+POST https://fastapi-example-ykqs.onrender.com/upload-video/?user_id={user_id}
+```
+
+### 下載影片 (Download Video)
+```
+GET https://fastapi-example-ykqs.onrender.com/download-video/{user_id}/{filename}
+```
 
 ---
 
@@ -131,22 +146,79 @@ curl -O https://fastapi-example-ykqs.onrender.com/export
 
 ---
 
-### 7. **Upload Video** 🎥
+### 7. **Upload Video** 🎥 *(作業要求)*
 ```
-POST /upload-video/
+POST /upload-video/?user_id={user_id}
 ```
-上傳 vlog 影片檔案
+上傳 vlog 影片到 MongoDB GridFS（永久儲存）
 
 **Form Data**:
 - `file`: 影片檔案 (multipart/form-data)
+
+**Query Parameters**:
 - `user_id` (optional): 使用者 ID，預設 `default_user`
 
 **範例**:
 ```bash
-curl -X POST https://fastapi-example-ykqs.onrender.com/upload-video/ \
-  -F "file=@/path/to/video.mp4" \
-  -F "user_id=b12207073"
+curl -X POST "https://fastapi-example-ykqs.onrender.com/upload-video/?user_id=test_user" \
+  -F "file=@earth.mp4"
 ```
+
+**PowerShell 範例**:
+```powershell
+$filePath = "C:\path\to\earth.mp4"
+$uri = "https://fastapi-example-ykqs.onrender.com/upload-video/?user_id=test_user"
+$boundary = [System.Guid]::NewGuid().ToString()
+$fileContent = [System.IO.File]::ReadAllBytes($filePath)
+$bodyLines = @(
+    "--$boundary",
+    'Content-Disposition: form-data; name="file"; filename="earth.mp4"',
+    "Content-Type: video/mp4",
+    "",
+    [System.Text.Encoding]::GetEncoding('iso-8859-1').GetString($fileContent),
+    "--$boundary--"
+)
+$body = $bodyLines -join "`r`n"
+Invoke-RestMethod -Uri $uri -Method Post -ContentType "multipart/form-data; boundary=$boundary" -Body ([System.Text.Encoding]::GetEncoding('iso-8859-1').GetBytes($body))
+```
+
+**回應**:
+```json
+{
+  "filename": "earth.mp4",
+  "file_id": "69303e5230e0ea5fc3431011",
+  "user_id": "test_user",
+  "message": "Video uploaded to MongoDB GridFS successfully"
+}
+```
+
+---
+
+### 8. **Download Video** 📥 *(作業要求)*
+```
+GET /download-video/{user_id}/{filename}
+```
+從 MongoDB GridFS 下載影片（無需知道 file_id 或完整 URI）
+
+**Path Parameters**:
+- `user_id`: 使用者 ID
+- `filename`: 影片檔名
+
+**範例**:
+```bash
+# 使用 curl 下載
+curl -o downloaded_earth.mp4 "https://fastapi-example-ykqs.onrender.com/download-video/test_user/earth.mp4"
+```
+
+**PowerShell 範例**:
+```powershell
+Invoke-WebRequest -Uri "https://fastapi-example-ykqs.onrender.com/download-video/test_user/earth.mp4" -OutFile "downloaded_earth.mp4"
+```
+
+**測試結果**:
+- ✅ 上傳成功：`earth.mp4` (1.57 MB) → MongoDB GridFS
+- ✅ 下載成功：從 GridFS 讀取並回傳完整影片檔案
+- ✅ 永久儲存：影片儲存在 MongoDB Atlas，不受 Render 伺服器重啟影響
 
 ---
 
@@ -214,11 +286,11 @@ uvicorn main:app --reload
 ## 📦 Dependencies
 
 - **FastAPI**: Web framework
-- **Motor**: MongoDB async driver
+- **Motor**: MongoDB async driver (支援 GridFS)
 - **Pydantic**: Data validation
 - **Uvicorn**: ASGI server
-- **aiofiles**: Async file operations
 - **python-multipart**: File upload support
+- **pymongo**: MongoDB BSON support (GridFS)
 
 ---
 
@@ -228,8 +300,10 @@ uvicorn main:app --reload
 
 ```
 MONGODB_URI = mongodb+srv://lai:Hs910738@lqi.pbmygvj.mongodb.net/
-DB_NAME = lai
+DB_NAME = data
 ```
+
+> **注意**: 影片使用 GridFS 儲存在 MongoDB Atlas 的 `data` 資料庫中，永久保存。
 
 ---
 
@@ -244,8 +318,22 @@ DB_NAME = lai
 
 - [x] FastAPI + MongoDB 後端
 - [x] 部署到公開伺服器 (Render.com)
-- [x] `/export` API 端點
+- [x] `/export` API 端點（匯出 JSON）
+- [x] `/upload-video/` API 端點（上傳影片到 GridFS）
+- [x] `/download-video/{user_id}/{filename}` API 端點（下載影片）
 - [x] MongoDB Compass 測試資料
-- [x] README.md 列出 `/export` URI
-- [x] CORS 設定
-- [x] 檔案上傳功能
+- [x] MongoDB GridFS 儲存影片（永久保存）
+- [x] README.md 完整 API 文件與測試結果
+- [x] CORS 設定（允許 Expo app 調用）
+
+---
+
+## ✅ 測試驗證結果
+
+### 2025年12月3日測試
+- ✅ **健康檢查**: `/health` → `{"status":"healthy","database":"connected"}`
+- ✅ **上傳影片**: `earth.mp4` (1.57 MB) → GridFS file_id: `69303e5230e0ea5fc3431011`
+- ✅ **下載影片**: 成功從 GridFS 下載完整影片檔案
+- ✅ **匯出資料**: `samples_export.json` 下載成功
+
+**結論**: 所有作業要求功能皆已實作完成並通過測試。
