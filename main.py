@@ -2,7 +2,7 @@ from typing import Optional, List
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
 import json
@@ -72,7 +72,9 @@ async def root():
 async def create_sample(sample: SampleCreate):
     """建立新的經驗取樣記錄"""
     sample_dict = sample.dict()
-    sample_dict["created_at_datetime"] = datetime.fromisoformat(sample.created_at.replace("Z", "+00:00"))
+    # 將 ISO 字串轉成 naive UTC datetime（PyMongo 不接受 timezone-aware datetime）
+    created_dt = datetime.fromisoformat(sample.created_at.replace("Z", "+00:00"))
+    sample_dict["created_at_datetime"] = created_dt.replace(tzinfo=None)
     
     result = await app.mongodb["samples"].insert_one(sample_dict)
     
@@ -143,8 +145,9 @@ async def upload_video(file: UploadFile = File(...), user_id: str = "default_use
     import os
     import aiofiles
     
-    # 儲存到 data/{user_id}/ 資料夾
-    file_dir = os.path.join("data", user_id)
+    # 使用絕對路徑確保檔案存在正確位置
+    base_dir = os.path.abspath("data")
+    file_dir = os.path.join(base_dir, user_id)
     os.makedirs(file_dir, exist_ok=True)
     
     file_path = os.path.join(file_dir, file.filename)
@@ -156,9 +159,36 @@ async def upload_video(file: UploadFile = File(...), user_id: str = "default_use
                 break
             await buffer.write(chunk)
     
+    print(f"✅ Video uploaded: {file_path}, exists: {os.path.exists(file_path)}")
+    
     return {
         "filename": file.filename,
         "saved_to": file_path,
         "user_id": user_id,
         "message": "Video uploaded successfully"
     }
+
+# 影片下載端點 (移到 app = FastAPI(...) 之後)
+@app.get("/download-video/{user_id}/{filename}")
+async def download_video(user_id: str, filename: str):
+    import os
+    
+    # 使用絕對路徑
+    base_dir = os.path.abspath("data")
+    file_path = os.path.join(base_dir, user_id, filename)
+    
+    print(f"🔍 Looking for file: {file_path}")
+    print(f"📁 File exists: {os.path.exists(file_path)}")
+    
+    if not os.path.exists(file_path):
+        # 列出目錄內容以便除錯
+        user_dir = os.path.join(base_dir, user_id)
+        if os.path.exists(user_dir):
+            files = os.listdir(user_dir)
+            print(f"📂 Files in {user_dir}: {files}")
+        else:
+            print(f"❌ Directory not found: {user_dir}")
+        
+        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+    
+    return FileResponse(file_path, media_type="video/mp4", filename=filename)
